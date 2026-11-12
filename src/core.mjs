@@ -210,6 +210,8 @@ export async function createServer({ store, artifacts, secret, bootstrapSecret, 
     // Repositories are intentionally disabled; returning an empty list preserves
     // dashboard compatibility without re-enabling non-Hindi catalog features.
     if (path === '/repositories' && method === 'GET') return [];
+    if (path === '/repositories' && method === 'POST') fail(422, 'repositories_disabled', 'Cloudstream repositories are not supported by Anidaku. Install a compatible anime manifest instead.');
+    if (path === '/native' && method === 'POST') fail(422, 'native_runtime_disabled', 'Native Cloudstream, Java and browser runtimes are not supported by Anidaku.');
     if (path === '/extensions' && method === 'GET') return state.extensions.map(redactExtension);
     if (path === '/extensions' && method === 'POST') {
       const input = await body(request), prepared = await extensions.prepare(input, request.signal);
