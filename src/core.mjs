@@ -206,6 +206,10 @@ export async function createServer({ store, artifacts, secret, bootstrapSecret, 
     }
     if (path === '/devices' && method === 'GET') return Object.entries(state.sessions).map(([id, device]) => ({ id, ...device, current: id === session.id }));
     if (path.startsWith('/devices/') && method === 'DELETE') { await edit(current => { delete current.sessions[path.slice(9)]; }); return { success: true }; }
+    // The compact Anidaku dashboard still requests this legacy list during boot.
+    // Repositories are intentionally disabled; returning an empty list preserves
+    // dashboard compatibility without re-enabling non-Hindi catalog features.
+    if (path === '/repositories' && method === 'GET') return [];
     if (path === '/extensions' && method === 'GET') return state.extensions.map(redactExtension);
     if (path === '/extensions' && method === 'POST') {
       const input = await body(request), prepared = await extensions.prepare(input, request.signal);
