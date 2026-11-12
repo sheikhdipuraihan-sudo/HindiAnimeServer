@@ -1,5 +1,5 @@
 export type ServerPlatform = 'node' | 'desktop' | 'vercel' | 'workers';
-export type SourceOperation = 'browse' | 'search' | 'info' | 'episodes' | 'resolve' | 'chapters' | 'pages' | 'novelChapters' | 'novelContent';
+export type SourceOperation = 'browse' | 'search' | 'info' | 'episodes' | 'resolve';
 export type ApiResponse<T> = { success: true; data: T } | { success: false; error: { code: string; message: string } };
 export interface ServerHealth {
   protocolVersion: 1; serverId: string | null; name: string; platform: ServerPlatform; setupRequired: boolean;
@@ -10,7 +10,7 @@ export interface ServerHealth {
 }
 export interface SourceDescriptor {
   id: string; extensionId: string; name: string; ecosystem: string; enabled: boolean;
-  priority: number; languages: string[]; kind: 'watch' | 'read' | 'novel'; available: boolean; reason: string;
+  priority: number; languages: string[]; kind: 'watch'; available: boolean; reason: string;
 }
 export interface InvokeRequest { sourceId: string; op: SourceOperation; args: Record<string, unknown> }
 /** Extensions own their provider order. Lower finite ranks are preferred;

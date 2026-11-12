@@ -1,5 +1,5 @@
 {
-  "name": "@tatakai/server",
+  "name": "hindi-anime-server",
   "version": "1.0.0",
   "private": true,
   "type": "module",
@@ -11,7 +11,8 @@
     "start": "node src/node.mjs",
     "test": "node --test test/*.test.mjs",
     "dev": "node scripts/dev.mjs",
-    "deploy:workers": "wrangler deploy"
+    "deploy:vercel": "vercel --prod",
+    "deploy:docker": "docker build -t hindi-anime-server ."
   },
   "dependencies": {
     "@jitl/quickjs-wasmfile-release-sync": "0.32.0",

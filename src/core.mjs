@@ -7,7 +7,8 @@ import { appendServerLog, logRoute } from './logs.mjs';
 
 export const API = '/api/server/v1';
 const nativeOrigins = ['app://tatakai.me', 'capacitor://localhost', 'http://localhost', 'https://localhost'];
-export const defaults = { name: 'Tatakai Server', languages: [], timeoutMs: 25000, concurrency: 4,
+export const HINDI_LANGUAGES = ['hi', 'hin', 'hindi', 'hindi-audio', 'hindi-subtitles'];
+export const defaults = { name: 'Hindi Anime Server', languages: HINDI_LANGUAGES, timeoutMs: 25000, concurrency: 4,
   cacheSeconds: 300, mediaCacheMb: 32, mediaCacheSeconds: 300, proxyEnabled: true, allowedOrigins: ['https://tatakai.me', 'https://www.tatakai.me', ...nativeOrigins] };
 const redactExtension = row => ({ id: row.id, manifestId: row.manifest.id, ecosystem: row.ecosystem, name: row.manifest.name, version: row.manifest.version,
   enabled: row.enabled, priority: row.priority, languages: row.languages, kind: row.kind, updatedAt: row.updatedAt,
@@ -27,7 +28,9 @@ function settings(input, current = defaults) {
   for (const key of ['languages', 'allowedOrigins']) if (input[key] !== undefined) {
     if (!Array.isArray(input[key]) || input[key].length > 50 || input[key].some(v => typeof v !== 'string' || v.length > 300)) fail(400, 'invalid_setting');
     if (key === 'allowedOrigins' && input[key].some(v => { if (nativeOrigins.includes(v)) return false; try { return new URL(v).origin !== v || !/^https?:/.test(v); } catch { return true; } })) fail(400, 'invalid_origin');
-    out[key] = [...new Set(input[key])];
+    out[key] = key === 'languages'
+      ? [...new Set(input[key].map(value => value.toLowerCase()))].filter(value => HINDI_LANGUAGES.some(language => value === language || value.includes(language)))
+      : [...new Set(input[key])];
   }
   return out;
 }
@@ -80,6 +83,11 @@ export async function createServer({ store, artifacts, secret, bootstrapSecret, 
     for (const key of ['subtitles', 'pages', 'sources', 'streams', 'metas', 'videos', 'results', 'items', 'sections']) if (out[key]) out[key] = await proxify(out[key], base, session, state, parent);
     return out;
   }
+  const isHindiAnime = row => row?.kind !== 'read' && row?.kind !== 'novel' && (() => {
+    const values = [...(row.languages || []), ...(row.manifest?.languages || []), row.manifest?.language, row.manifest?.audioLanguage, row.manifest?.subtitleLanguage]
+      .filter(Boolean).map(value => String(value).toLowerCase());
+    return values.length === 0 || values.some(value => HINDI_LANGUAGES.some(language => value === language || value.includes(language)));
+  })();
   async function invokeRaw(row, op, args, signal, onProgress) {
     if (row.external) return hosts.catalog.invoke(row, op, args, signal);
     // Catalog-based requests must use an exact title match, never the first result.
@@ -98,7 +106,7 @@ export async function createServer({ store, artifacts, secret, bootstrapSecret, 
   }
   async function invoke(row, op, args, signal, state, progressive = false) {
     const seconds = state?.settings.cacheSeconds || 0;
-    if (!seconds || !['browse', 'search', 'info', 'episodes', 'chapters', 'novelChapters', 'novelContent'].includes(op)) return invokeRaw(row, op, args, signal);
+    if (!seconds || !['browse', 'search', 'info', 'episodes'].includes(op)) return invokeRaw(row, op, args, signal);
     const key = await digest(JSON.stringify([row.id, row.updatedAt, row.preferences, op, args]));
     const cached = state.cache?.[key];
     if (cached?.expires > Date.now()) { const value = await encryption.open(cached.value); return progressive ? {chapters:value,partial:false} : value; }
@@ -163,7 +171,7 @@ export async function createServer({ store, artifacts, secret, bootstrapSecret, 
       if (!state) fail(409, 'setup_required');
       return proxy.serve(request, path.slice(7), base, state);
     }
-    const owner = /^\/(extensions|repositories|settings|devices|diagnostics|logs|export|import|native|cache|auth\/password|auth\/pairing)/.test(path);
+    const owner = /^\/(extensions|settings|devices|diagnostics|logs|export|import|cache|auth\/password|auth\/pairing)/.test(path);
     const session = await authorize(request, state, owner);
     if (path === '/logs' && method === 'GET') {
       const after = Math.max(0, Number(url.searchParams.get('after')) || 0);
@@ -174,10 +182,6 @@ export async function createServer({ store, artifacts, secret, bootstrapSecret, 
       mediaBytes: Object.values(state.mediaCache || {}).filter(item => item.expires > Date.now()).reduce((sum, item) => sum + item.bytes, 0),
       maxMediaBytes: (state.settings.mediaCacheMb || 0) * 1024 * 1024 };
     if (path === '/cache' && method === 'DELETE') { lookups.clear(); await mediaCache.clear(); return { success: true }; }
-    if (path === '/native' && method === 'POST') {
-      if (!hosts.catalog?.manage) fail(422, 'unsupported_runtime', 'Native extension management requires the optional Node runtime or desktop');
-      return hosts.catalog.manage(await body(request), request.signal);
-    }
     if (path === '/media/refresh' && method === 'POST') {
       const input = await body(request), entry = await encryption.open(String(input.ticket || ''));
       if (entry.sessionId !== session.id) fail(403, 'media_owner_mismatch');
@@ -225,43 +229,28 @@ export async function createServer({ store, artifacts, secret, bootstrapSecret, 
         const input = await body(request);
         if (input.enabled !== undefined && typeof input.enabled !== 'boolean') fail(400, 'invalid_setting');
         if (input.priority !== undefined && (!Number.isInteger(input.priority) || Math.abs(input.priority) > 1000)) fail(400, 'invalid_priority');
-        if (input.languages !== undefined && (!Array.isArray(input.languages) || input.languages.some(v => typeof v !== 'string'))) fail(400, 'invalid_languages');
+        if (input.languages !== undefined && (!Array.isArray(input.languages) || input.languages.some(v => typeof v !== 'string') || input.languages.some(v => !HINDI_LANGUAGES.some(language => v.toLowerCase() === language || v.toLowerCase().includes(language))))) fail(400, 'hindi_languages_only');
         if (input.preferences !== undefined && JSON.stringify(input.preferences).length > 8192) fail(413, 'preferences_too_large');
         const preferences = input.preferences === undefined ? undefined : await encryption.seal(input.preferences);
         return edit(current => { const item = current.extensions.find(v => v.id === row.id); if (!item) fail(404, 'extension_not_found'); for (const key of ['enabled', 'priority', 'languages']) if (input[key] !== undefined) item[key] = input[key]; if (preferences) item.preferences = preferences; return redactExtension(item); });
       }
     }
-    if (path === '/repositories') {
-      if (method === 'GET') return state.repositories;
-      if (method === 'POST') {
-        const input = await body(request); const { publicUrl } = await import('./security.mjs'); const origin = publicUrl(input.url).href;
-        return edit(current => { if (current.repositories.length >= 50) fail(409, 'repository_limit'); const row = { id: random(), name: String(input.name || new URL(origin).hostname).slice(0, 100), url: origin }; current.repositories.push(row); return row; });
-      }
-    }
-    const repo = /^\/repositories\/([^/]+)(?:\/(catalog))?$/.exec(path);
-    if (repo) {
-      const row = state.repositories.find(item => item.id === repo[1]); if (!row) fail(404, 'repository_not_found');
-      if (method === 'DELETE') { await edit(current => { current.repositories = current.repositories.filter(item => item.id !== row.id); }); return { success: true }; }
-      if (method === 'GET') { const { response } = await network(row.url, { signal: request.signal }); if (!response.ok) fail(502, 'repository_unavailable'); return JSON.parse(await limitedText(response)); }
-    }
-    if (path === '/sources' && method === 'GET') return (await sourceRows(state)).filter(row => row.enabled).sort((a, b) => b.priority - a.priority).flatMap(row => {
+    if (path === '/sources' && method === 'GET') return (await sourceRows(state)).filter(row => row.enabled && isHindiAnime(row)).sort((a, b) => b.priority - a.priority).flatMap(row => {
       const descriptor = sourceDescriptor(row, state.id, platform, hosts);
-      const result = [descriptor];
-      if (row.kind !== 'read' && row.manifest.capabilities?.includes('manga')) result.push({ ...descriptor, id: descriptor.id + '~read', name: descriptor.name + ' · Manga', kind: 'read' });
-      if (row.manifest.capabilities?.includes('novel')) result.push({ ...descriptor, id: descriptor.id + '~novel', name: descriptor.name + ' · Novels', kind: 'novel' });
-      return result;
+      return [descriptor];
     });
     if (path === '/invoke' && method === 'POST') {
       const input = await body(request), extensionId = String(input.sourceId || '').replace(`${state.id}/`, '').replace(/~(?:read|novel)$/, '');
-      if (!['browse', 'search', 'info', 'episodes', 'resolve', 'chapters', 'pages', 'novelChapters', 'novelContent'].includes(input.op)) fail(403, 'data_operation_required');
+      if (!['browse', 'search', 'info', 'episodes', 'resolve'].includes(input.op)) fail(403, 'anime_operation_required');
       const row = (await sourceRows(state)).find(item => item.id === extensionId); if (!row) fail(404, 'source_not_found');
+      if (!isHindiAnime(row)) fail(403, 'hindi_anime_source_required');
       const signal = AbortSignal.any([request.signal, AbortSignal.timeout(state.settings.timeoutMs)]);
       let result = await invoke(row, input.op, input.args || {}, signal, state, input.progressive === true && ['chapters','novelChapters'].includes(input.op));
       if (input.op === 'pages' && Array.isArray(result)) result = result.map(page => typeof page === 'string' ? { imageUrl: page } : page);
       return proxify(result, base, session, state);
     }
     if (path === '/resolve' && method === 'POST') {
-      const input = await body(request), rows = (await sourceRows(state)).filter(row => row.enabled && row.kind !== 'read' && (!state.settings.languages.length || !row.languages.length || row.languages.some(lang => state.settings.languages.includes(lang)))).sort((a, b) => b.priority - a.priority);
+      const input = await body(request), rows = (await sourceRows(state)).filter(row => row.enabled && isHindiAnime(row)).sort((a, b) => b.priority - a.priority);
       const signal = AbortSignal.any([request.signal, AbortSignal.timeout(state.settings.timeoutMs)]);
       const run = async publish => {
         const sources = [], statuses = rows.map(row => ({ provider: `${state.id}/${row.id}`, name: row.manifest.name, ecosystem: row.ecosystem, kind: 'anime', status: 'loading', count: 0, durationMs: 0 })); let next = 0;
@@ -309,8 +298,8 @@ export async function createServer({ store, artifacts, secret, bootstrapSecret, 
       }
       return run();
     }
-    if (path === '/export' && method === 'GET') return { schema: 1, settings: state.settings, extensions: state.extensions.map(redactExtension), repositories: state.repositories };
-    if (path === '/import' && method === 'POST') { const input = await body(request); if (input.schema !== 1) fail(400, 'unsupported_schema'); return edit(current => current.settings = settings(input.settings || {}, current.settings)); }
+    if (path === '/export' && method === 'GET') return { schema: 2, product: 'hindi-anime', settings: state.settings, extensions: state.extensions.map(redactExtension) };
+    if (path === '/import' && method === 'POST') { const input = await body(request); if (![1, 2].includes(input.schema)) fail(400, 'unsupported_schema'); return edit(current => current.settings = settings(input.settings || {}, current.settings)); }
     if (path === '/diagnostics' && method === 'GET') return { platform, protocolVersion: 1, extensionCount: state.extensions.length, recent: state.audit || [], capabilities: families.map(ecosystem => ({ ecosystem, ...capability(ecosystem, platform, hosts) })) };
     fail(404, 'route_not_found');
   }

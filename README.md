@@ -1,9 +1,20 @@
-# Tatakai Extension Server
+# Hindi Anime Server
+
+This fork is a focused backend for a Hindi anime streaming app. It keeps the
+Tatakai-compatible source runtime, authentication, media proxy, persistence and
+dashboard needed to configure providers, while removing manga, novel, Kodi,
+Java/native and browser-runtime support.
+
+Providers that declare Hindi language, audio or subtitle tags are listed and
+invoked; providers with no language metadata remain available for testing, but
+explicitly non-Hindi providers are filtered out. Supported source operations
+are browse, search, info, episodes and resolve. Streaming remains subject to
+provider permissions and applicable copyright law.
 
 [![Server checks](https://github.com/Snozxyx/TatakaiServer/actions/workflows/ci.yml/badge.svg)](https://github.com/Snozxyx/TatakaiServer/actions/workflows/ci.yml)
 
-**Your sources, connected.** Install extensions once and use their anime, manga
-and novel sources from Tatakai web, desktop and mobile.
+**Hindi anime sources, connected.** Install Hindi anime extensions once and use
+them from your own web or mobile client.
 
 ```text
 Sources → Extension runtime → Built-in media proxy → Tatakai
@@ -89,6 +100,27 @@ Restart after server code/environment changes. Stop any older dashboard-only
 Vite command with Ctrl+C first; the updated command fixes its missing-API proxy.
 
 ## Deploy
+
+### Recommended: Vercel
+
+Yes, this server can be hosted on Vercel. Import this fork with the repository
+root as the project root, keep the framework as **Other**, and use the included
+`vercel.json`. Configure these environment variables in Vercel:
+
+```text
+SERVER_SECRET       a stable random secret with at least 32 characters
+BOOTSTRAP_SECRET    a separate stable setup secret
+PUBLIC_URL          your Vercel HTTPS URL
+DATABASE_URL        a Neon Postgres connection string
+BLOB_READ_WRITE_TOKEN  a private Vercel Blob token
+```
+
+Run the initial setup from the dashboard after deployment. Vercel is suitable
+for source browsing, search, metadata, episode lookup and normal HLS/MP4
+playback. Its serverless function has a bounded streaming window, so very long
+or large upstream responses may fail; use a VPS/Docker deployment later if the
+app requires long-lived proxying or heavy traffic. Do not put secrets in the
+frontend or commit them to GitHub.
 
 ### Vercel
 

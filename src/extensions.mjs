@@ -1,12 +1,11 @@
 import { fail, limitedText, publicUrl, cleanHeaders, random } from './security.mjs';
 
-export const families = ['tatakai', 'stremio', 'seanime', 'sora', 'mangayomi', 'mihon', 'cloudstream', 'aniyomi', 'kodi'];
-export const operations = ['browse', 'search', 'info', 'episodes', 'resolve', 'chapters', 'pages', 'novelChapters', 'novelContent', 'preferences', 'setPreference'];
-const nativeFamilies = new Set(['mihon', 'cloudstream', 'aniyomi']);
+// HindiAnimeServer intentionally supports only HTTP/script-based anime sources.
+// Manga, novel, Kodi, Java and browser-native adapters are outside this product.
+export const families = ['tatakai', 'stremio', 'seanime', 'sora', 'mangayomi'];
+export const operations = ['browse', 'search', 'info', 'episodes', 'resolve', 'preferences', 'setPreference'];
+const nativeFamilies = new Set();
 export function capability(ecosystem, platform, hosts = {}) {
-  if (ecosystem === 'kodi') return { available: false, reason: 'No Kodi execution adapter exists' };
-  if (nativeFamilies.has(ecosystem)) return { available: platform === 'node' || platform === 'desktop' ? !!hosts[ecosystem] : false,
-    reason: platform === 'node' || platform === 'desktop' ? 'Requires the optional Java compatibility runtime' : 'Requires a Node or desktop host; unavailable on serverless' };
   return { available: true, reason: ecosystem === 'stremio' ? 'Hosted HTTP addons' : 'Compatible scripts; unsupported host APIs are reported per extension' };
 }
 function resourceUrl(row, resource, type, id, extra) {
@@ -14,10 +13,10 @@ function resourceUrl(row, resource, type, id, extra) {
   return `${root}/${resource}/${encodeURIComponent(type)}/${encodeURIComponent(id)}${extra ? '/' + extra : ''}.json`;
 }
 const METHODS = {
-  tatakai: { browse: 'getHome', search: 'search', info: 'getInfo', episodes: 'getEpisodes', resolve: 'single', chapters: 'getMangaChapters', pages: 'getMangaPages', novelChapters: 'getNovelChapters', novelContent: 'getNovelContent', preferences: 'getPreferences' },
-  sora: { search: 'searchResults', info: 'extractDetails', episodes: 'extractEpisodes', resolve: 'extractStreamUrl', chapters: 'extractChapters', pages: 'extractImages' },
-  mangayomi: { browse: 'getPopular', search: 'search', info: 'getDetail', episodes: 'getDetail', resolve: 'getVideoList', chapters: 'getDetail', pages: 'getPageList', preferences: 'getSourcePreferences' },
-  seanime: { search: 'search', info: 'getInfo', episodes: 'findEpisodes', resolve: 'resolve', chapters: 'findChapters', pages: 'findChapterPages' },
+  tatakai: { browse: 'getHome', search: 'search', info: 'getInfo', episodes: 'getEpisodes', resolve: 'single', preferences: 'getPreferences' },
+  sora: { search: 'searchResults', info: 'extractDetails', episodes: 'extractEpisodes', resolve: 'extractStreamUrl' },
+  mangayomi: { browse: 'getPopular', search: 'search', info: 'getDetail', episodes: 'getDetail', resolve: 'getVideoList', preferences: 'getSourcePreferences' },
+  seanime: { search: 'search', info: 'getInfo', episodes: 'findEpisodes', resolve: 'resolve' },
 };
 export function sourceDescriptor(row, serverId, platform, hosts) {
   const support = capability(row.ecosystem, platform, hosts);
@@ -38,12 +37,12 @@ export function createExtensions({ network, artifacts, interpreter, nodeInterpre
       manifest = JSON.parse(JSON.stringify(manifest));
       const metadata = { ...manifest }; delete metadata.payload;
       if (JSON.stringify(metadata).length > 16384) fail(413, 'manifest_too_large');
-      if (!['id', 'name', 'version'].every(key => typeof manifest[key] === 'string' && manifest[key].length > 0 && manifest[key].length <= 200) || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(manifest.id) || manifest.id.includes('..')) fail(400, 'invalid_manifest');
+        if (!['id', 'name', 'version'].every(key => typeof manifest[key] === 'string' && manifest[key].length > 0 && manifest[key].length <= 200) || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(manifest.id) || manifest.id.includes('..')) fail(400, 'invalid_manifest');
       const ecosystem = input.ecosystem || (Array.isArray(manifest.resources) && Array.isArray(manifest.types) ? 'stremio' : manifest.ecosystem || 'tatakai');
       if (!families.includes(ecosystem)) fail(400, 'unknown_ecosystem');
       const support = capability(ecosystem, platform, hosts);
       if (!support.available) fail(422, 'unsupported_runtime', support.reason);
-      if (nativeFamilies.has(ecosystem)) fail(422, 'native_management_required', 'Install this family through Native runtimes in Advanced settings');
+      if (manifest.type === 'manga-provider' || manifest.capabilities?.includes('manga') || manifest.capabilities?.includes('novel')) fail(422, 'anime_only', 'HindiAnimeServer accepts anime providers only');
       let code = input.code;
       const runtime = input.runtime === 'node' ? 'node' : 'interpreter';
       if (runtime === 'node' && ecosystem !== 'tatakai') fail(422, 'unsupported_runtime', 'The trusted Node runtime accepts Tatakai source bundles; other script families use their dedicated interpreter adapters');
@@ -73,14 +72,13 @@ export function createExtensions({ network, artifacts, interpreter, nodeInterpre
       delete manifest.payload; delete manifest.payloadURI;
       if (JSON.stringify(input.preferences || {}).length > 8192) fail(413, 'preferences_too_large');
       return { id, ecosystem, runtime, manifest, origin: origin ? await vault.seal(origin) : '', artifact, enabled: true,
-        preferences: await vault.seal(input.preferences || {}), priority: 0, languages: [], kind: input.kind || (manifest.type === 'manga-provider' ? 'read' : 'watch'), updatedAt: new Date().toISOString() };
+        preferences: await vault.seal(input.preferences || {}), priority: 0, languages: [], kind: 'watch', updatedAt: new Date().toISOString() };
     },
     async invoke(row, op, args, signal, onProgress) {
       if (!row.enabled) fail(409, 'extension_disabled');
       const support = capability(row.ecosystem, platform, hosts);
       if (!support.available) fail(422, 'unsupported_runtime', support.reason);
       if (!operations.includes(op)) fail(400, 'invalid_operation');
-      if (['novelChapters', 'novelContent'].includes(op) && (row.ecosystem !== 'tatakai' || !row.manifest.capabilities?.includes('novel'))) fail(422, 'unsupported_operation', 'This extension does not provide novel chapters or text');
       const preferences = await vault.open(row.preferences);
       if (nativeFamilies.has(row.ecosystem)) return hosts[row.ecosystem].invoke(row, op, { ...args, preferences }, signal);
       if (row.ecosystem === 'stremio') {
